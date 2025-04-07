@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Load Media</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        img, video {
+            width: 100px;
+            height: 100px;
+            margin: 5px;
+            object-fit: cover;
+            aspect-ratio: 1 / 1;
+        }
+        .checkbox-wrapper {
+            display: flex;
+            justify-content: center;
+            margin-top: 5px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-primary fixed-top">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">Carregar Mídias</span>
+        </div>
+    </nav>
+
+    <div class="container py-5 mt-5">
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Configurações</h5>
+                <div class="mb-3">
+                    <label for="thumbnailSize" class="form-label">Tamanho das Miniaturas</label>
+                    <input type="range" id="thumbnailSize" class="form-range" min="50" max="1000" value="100">
+                </div>
+                <div class="mb-3">
+                    <textarea id="linkInput" class="form-control" rows="5" placeholder="Cole os links das imagens ou vídeos aqui, um por linha"></textarea>
+                </div>
+                <div class="text-center">
+                    <button id="selectAllButton" class="btn btn-secondary me-2">
+                        <i class="bi bi-check2-square"></i> Selecionar Todas
+                    </button>
+                    <button id="savePdfButton" class="btn btn-success">
+                        <i class="bi bi-file-earmark-pdf"></i> Salvar Imagens em PDF
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="progress mb-4" style="height: 20px; display: none;" id="progressContainer">
+            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%;">0%</div>
+        </div>
+
+        <div id="image-container" class="row g-3"></div>
+
+        <div class="text-center mt-3">
+            <span id="total-images" class="badge bg-secondary"></span>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const imageContainer = document.getElementById('image-container');
+        const thumbnailSize = document.getElementById('thumbnailSize');
+        const selectAllButton = document.getElementById('selectAllButton');
+        let mediaUrls = [];
+        let totalMedia = 0;
+
+        thumbnailSize.addEventListener('input', function() {
+            const size = `${this.value}px`;
+            document.querySelectorAll('#image-container img, #image-container video').forEach(el => {
+                el.style.width = size;
+                el.style.height = size;
+                el.style.aspectRatio = '1 / 1';
+            });
+        });
+
+        document.getElementById('linkInput').addEventListener('input', function() {
+            const content = this.value;
+            let splitedContent = content.split('\n');
+            mediaUrls = splitedContent
+                .map(line => line.trim().replace(/\*+$/, ''))
+                .filter(line => line !== '');
+            totalMedia = mediaUrls.length;
+            document.getElementById('total-images').textContent = `Total de mídias: ${totalMedia}`;
+
+            imageContainer.innerHTML = '';
+            mediaUrls.forEach(url => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'col-6 col-md-4 col-lg-3 d-flex flex-column align-items-center';
+
+                if (url.endsWith('.mp4')) {
+                    const video = document.createElement('video');
+                    video.src = url;
+                    video.controls = true;
+                    video.className = 'border rounded w-100';
+                    video.style.height = `${thumbnailSize.value}px`;
+                    video.style.width = `${thumbnailSize.value}px`;
+                    video.style.aspectRatio = '1 / 1';
+                    video.style.objectFit = 'cover';
+                    wrapper.appendChild(video);
+                } else {
+                    const img = document.createElement('img');
+                    img.src = url;
+                    img.className = 'border rounded w-100';
+                    img.style.height = `${thumbnailSize.value}px`;
+                    img.style.width = `${thumbnailSize.value}px`;
+                    img.style.aspectRatio = '1 / 1';
+                    img.style.objectFit = 'cover';
+                    img.addEventListener('click', () => {
+                        window.open(url, '_blank');
+                    });
+                    wrapper.appendChild(img);
+                }
+
+                const checkboxWrapper = document.createElement('div');
+                checkboxWrapper.className = 'checkbox-wrapper';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'form-check-input';
+                checkboxWrapper.appendChild(checkbox);
+                wrapper.appendChild(checkboxWrapper);
+
+                imageContainer.appendChild(wrapper);
+            });
+        });
+
+        selectAllButton.addEventListener('click', function() {
+            const checkboxes = document.querySelectorAll('#image-container .form-check-input');
+            const allSelected = Array.from(checkboxes).every(checkbox => checkbox.checked);
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = !allSelected;
+            });
+        });
+
+        document.getElementById('savePdfButton').addEventListener('click', async function() {
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF();
+            const selectedImages = Array.from(document.querySelectorAll('#image-container .form-check-input:checked'))
+                .map(checkbox => checkbox.nextElementSibling);
+            const progressContainer = document.getElementById('progressContainer');
+            const progressBar = document.getElementById('progressBar');
+
+            if (selectedImages.length === 0) {
+                alert('Nenhuma imagem selecionada para salvar no PDF.');
+                return;
+            }
+
+            progressContainer.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+
+            for (let i = 0; i < selectedImages.length; i++) {
+                const img = selectedImages[i];
+                const imgData = await fetch(img.src).then(res => res.blob()).then(blob => {
+                    return new Promise(resolve => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result);
+                        reader.readAsDataURL(blob);
+                    });
+                });
+
+                const imgWidth = pdf.internal.pageSize.getWidth();
+                const imgHeight = (img.naturalHeight / img.naturalWidth) * imgWidth;
+
+                if (i > 0) pdf.addPage();
+                pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
+
+                const progress = Math.round(((i + 1) / selectedImages.length) * 100);
+                progressBar.style.width = `${progress}%`;
+                progressBar.textContent = `${progress}%`;
+            }
+
+            pdf.save('imagens.pdf');
+            progressContainer.style.display = 'none';
+        });
+    </script>
+</body>
+</html>
