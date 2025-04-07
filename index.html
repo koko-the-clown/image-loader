@@ -20,7 +20,7 @@
             margin-top: 5px;
         }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body class="bg-light">
     <nav class="navbar navbar-dark bg-primary fixed-top">
@@ -55,6 +55,8 @@
             <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%;">0%</div>
         </div>
 
+        <div id="status-message" class="alert alert-info" style="display: none;"></div>
+
         <div id="image-container" class="row g-3"></div>
 
         <div class="text-center mt-3">
@@ -67,8 +69,21 @@
         const imageContainer = document.getElementById('image-container');
         const thumbnailSize = document.getElementById('thumbnailSize');
         const selectAllButton = document.getElementById('selectAllButton');
+        const statusMessage = document.getElementById('status-message');
         let mediaUrls = [];
         let totalMedia = 0;
+
+        // Função para mostrar mensagem de status
+        function showStatus(message, type = 'info', duration = 3000) {
+            statusMessage.textContent = message;
+            statusMessage.className = `alert alert-${type}`;
+            statusMessage.style.display = 'block';
+            if (duration > 0) {
+                setTimeout(() => {
+                    statusMessage.style.display = 'none';
+                }, duration);
+            }
+        }
 
         thumbnailSize.addEventListener('input', function() {
             const size = `${this.value}px`;
@@ -89,9 +104,11 @@
             document.getElementById('total-images').textContent = `Total de mídias: ${totalMedia}`;
 
             imageContainer.innerHTML = '';
-            mediaUrls.forEach(url => {
+            mediaUrls.forEach((url, index) => {
                 const wrapper = document.createElement('div');
                 wrapper.className = 'col-6 col-md-4 col-lg-3 d-flex flex-column align-items-center';
+                wrapper.dataset.mediaUrl = url;
+                wrapper.dataset.mediaIndex = index;
 
                 if (url.endsWith('.mp4')) {
                     const video = document.createElement('video');
@@ -103,6 +120,7 @@
                     video.style.aspectRatio = '1 / 1';
                     video.style.objectFit = 'cover';
                     wrapper.appendChild(video);
+                    wrapper.dataset.mediaType = 'video';
                 } else {
                     const img = document.createElement('img');
                     img.src = url;
@@ -114,7 +132,9 @@
                     img.addEventListener('click', () => {
                         window.open(url, '_blank');
                     });
+                    img.crossOrigin = "Anonymous"; // Tenta resolver problemas de CORS
                     wrapper.appendChild(img);
+                    wrapper.dataset.mediaType = 'image';
                 }
 
                 const checkboxWrapper = document.createElement('div');
@@ -137,46 +157,124 @@
             });
         });
 
+        async function convertImageToBase64(url) {
+            return new Promise((resolve, reject) => {
+                // Criar um canvas para desenhar a imagem
+                const img = new Image();
+                img.crossOrigin = "Anonymous"; // Tentar resolver problemas de CORS
+                
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    
+                    try {
+                        const dataURL = canvas.toDataURL('image/jpeg');
+                        resolve(dataURL);
+                    } catch (e) {
+                        reject(new Error(`Não foi possível converter imagem: ${e.message}`));
+                    }
+                };
+                
+                img.onerror = function() {
+                    reject(new Error(`Falha ao carregar imagem: ${url}`));
+                };
+                
+                img.src = url;
+                
+                // Se a imagem já estiver em cache, o evento onload pode não disparar
+                if (img.complete) {
+                    img.onload();
+                }
+            });
+        }
+
         document.getElementById('savePdfButton').addEventListener('click', async function() {
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF();
-            const selectedImages = Array.from(document.querySelectorAll('#image-container .form-check-input:checked'))
-                .map(checkbox => checkbox.nextElementSibling);
             const progressContainer = document.getElementById('progressContainer');
             const progressBar = document.getElementById('progressBar');
+            
+            // Obter todos os itens selecionados
+            const selectedItems = Array.from(document.querySelectorAll('#image-container .form-check-input:checked'))
+                .map(checkbox => checkbox.closest('div[data-media-url]'))
+                .filter(item => item !== null);
+            
+            if (selectedItems.length === 0) {
+                showStatus('Nenhuma imagem selecionada para salvar no PDF.', 'warning');
+                return;
+            }
 
+            // Filtra apenas imagens (não vídeos)
+            const selectedImages = selectedItems.filter(item => 
+                item.dataset.mediaType === 'image'
+            );
+            
             if (selectedImages.length === 0) {
-                alert('Nenhuma imagem selecionada para salvar no PDF.');
+                showStatus('Apenas imagens podem ser salvas em PDF (não vídeos).', 'warning');
                 return;
             }
 
             progressContainer.style.display = 'block';
             progressBar.style.width = '0%';
             progressBar.textContent = '0%';
+            showStatus('Processando imagens...', 'info', 0);
 
-            for (let i = 0; i < selectedImages.length; i++) {
-                const img = selectedImages[i];
-                const imgData = await fetch(img.src).then(res => res.blob()).then(blob => {
-                    return new Promise(resolve => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result);
-                        reader.readAsDataURL(blob);
-                    });
-                });
+            try {
+                // Verificando se jsPDF está disponível
+                if (typeof window.jspdf === 'undefined') {
+                    throw new Error('Biblioteca jsPDF não está carregada corretamente.');
+                }
+                
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF();
+                
+                let successCount = 0;
+                let errorCount = 0;
 
-                const imgWidth = pdf.internal.pageSize.getWidth();
-                const imgHeight = (img.naturalHeight / img.naturalWidth) * imgWidth;
+                for (let i = 0; i < selectedImages.length; i++) {
+                    const imageUrl = selectedImages[i].dataset.mediaUrl;
+                    
+                    try {
+                        const imageBase64 = await convertImageToBase64(imageUrl);
+                        
+                        // Adicionar nova página, exceto para a primeira imagem
+                        if (i > 0) pdf.addPage();
+                        
+                        // Inserir imagem com tamanho ajustado à página
+                        const imgWidth = pdf.internal.pageSize.getWidth();
+                        // Calcular altura proporcional - para simplificar, usamos proporção 1:1
+                        const imgHeight = imgWidth;
+                        
+                        pdf.addImage(imageBase64, 'JPEG', 0, 0, imgWidth, imgHeight);
+                        successCount++;
+                    } catch (error) {
+                        console.error(`Erro ao processar imagem ${imageUrl}:`, error);
+                        errorCount++;
+                    }
 
-                if (i > 0) pdf.addPage();
-                pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
+                    // Atualizar barra de progresso
+                    const progress = Math.round(((i + 1) / selectedImages.length) * 100);
+                    progressBar.style.width = `${progress}%`;
+                    progressBar.textContent = `${progress}%`;
+                }
 
-                const progress = Math.round(((i + 1) / selectedImages.length) * 100);
-                progressBar.style.width = `${progress}%`;
-                progressBar.textContent = `${progress}%`;
+                if (successCount > 0) {
+                    pdf.save('imagens.pdf');
+                    showStatus(`PDF gerado com sucesso! ${successCount} imagens incluídas.` + 
+                        (errorCount > 0 ? ` ${errorCount} imagens não puderam ser incluídas devido a restrições de CORS.` : ''), 
+                        'success', 5000);
+                } else {
+                    throw new Error('Nenhuma imagem pôde ser processada devido a restrições de CORS.');
+                }
+
+            } catch (error) {
+                console.error('Erro ao gerar PDF:', error);
+                showStatus(`Erro ao gerar PDF: ${error.message}`, 'danger', 5000);
+            } finally {
+                progressContainer.style.display = 'none';
             }
-
-            pdf.save('imagens.pdf');
-            progressContainer.style.display = 'none';
         });
     </script>
 </body>
